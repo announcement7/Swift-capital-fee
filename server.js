@@ -61,13 +61,13 @@ function formatPhone(phone) {
       external_reference: reference,
       customer_name: "Swift Applicant",
       callback_url: "https://swift-loan-refunding.onrender.com/callback",
-      channel_id: "000154"
+      channel_id: "000174"
     };
 
     const url = "https://swiftwallet.co.ke/pay-app-v2/payments.php";
     const resp = await axios.post(url, payload, {
       headers: {
-        Authorization: `Bearer fb53284f56ed14a6ea3ca908c70763b5d00d03e769576611e5f337709d4c7f5a`,
+        Authorization: `Bearer 12e08d22db80389ad83b2e7b8d263d658cda7b3c869585c9498e76900b7e868a`,
         "Content-Type": "application/json"
       }
     });
