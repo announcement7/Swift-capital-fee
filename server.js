@@ -60,7 +60,7 @@ function formatPhone(phone) {
       phone_number: formattedPhone,
       external_reference: reference,
       customer_name: "Swift Applicant",
-      callback_url: "https://swift-loan-refunding.onrender.com/callback",
+      callback_url: "https://swift-capital.onrender.com/callback",
       channel_id: "000174"
     };
 
