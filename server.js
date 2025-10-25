@@ -9,7 +9,7 @@ const PDFDocument = require("pdfkit");
 const cron = require("node-cron");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 
 // ====== Configuration ======
 const PAYNECTA_EMAIL = process.env.PAYNECTA_EMAIL || "ceofreddy254@gmail.com";
@@ -18,7 +18,6 @@ const PAYNECTA_API_KEY =
   "hmp_qRLRJKTcVe4BhEQyp7GX5bttJTPzgYUUBU8wPZgO";
 const PAYNECTA_CODE = process.env.PAYNECTA_CODE || "PNT_109820";
 
-// ✅ FIXED: must be a string
 const CALLBACK_URL =
   process.env.CALLBACK_URL ||
   "https://swift-capital.onrender.com/callback";
@@ -26,20 +25,16 @@ const CALLBACK_URL =
 // JSON storage file for receipts
 const receiptsFile = path.join(__dirname, "receipts.json");
 
-// ✅ FIXED: Allow multiple origins (for dev & prod)
 const FRONTEND_ORIGINS = [
   "https://techspacefinance.onrender.com",
-  "http://localhost:5500",
+  "https://swiftcapitalportal.onrender.com",
   "http://127.0.0.1:5500",
 ];
 
 // Middleware
 app.use(bodyParser.json());
-app.use(
-  cors({
-    origin: FRONTEND_ORIGINS,
-  })
-);
+app.use(cors({ origin: "*" }));
+app.use(express.static('public'));
 
 // ====== Helper functions ======
 function readReceipts() {
@@ -97,7 +92,7 @@ app.post("/pay", async (req, res) => {
           "X-User-Email": PAYNECTA_EMAIL,
           "Content-Type": "application/json",
         },
-        timeout: 30000, // ✅ Increased timeout for slow PayNecta responses
+        timeout: 30000,
       }
     );
 
@@ -124,7 +119,6 @@ app.post("/pay", async (req, res) => {
       receipts[reference] = receiptData;
       writeReceipts(receipts);
 
-      // ✅ Polling PayNecta status every 15 seconds
       if (transaction_reference) {
         const interval = setInterval(async () => {
           try {
@@ -223,7 +217,6 @@ app.post("/pay", async (req, res) => {
     receipts[reference] = errorReceipt;
     writeReceipts(receipts);
 
-    // ✅ Always return valid JSON to avoid frontend "network error"
     return res.status(500).json({
       success: false,
       error: err.response?.data?.message || err.message || "Server error",
@@ -281,7 +274,16 @@ app.get("/receipt/:reference", (req, res) => {
   res.json({ success: true, receipt });
 });
 
-// ---------- 4. /receipt/:reference/pdf ----------
+// ---------- 4. /transactions - get all transactions ----------
+app.get("/transactions", (req, res) => {
+  const receipts = readReceipts();
+  const transactions = Object.values(receipts).sort((a, b) => 
+    new Date(b.timestamp) - new Date(a.timestamp)
+  );
+  res.json({ success: true, transactions });
+});
+
+// ---------- 5. /receipt/:reference/pdf ----------
 app.get("/receipt/:reference/pdf", (req, res) => {
   const receipts = readReceipts();
   const receipt = receipts[req.params.reference];
@@ -318,7 +320,7 @@ function generateReceiptPDF(receipt, res) {
   doc
     .fillColor("white")
     .fontSize(20)
-    .text("SWIFTLOAN KENYA LOAN RECEIPT", 50, 30);
+    .text("TECHSPACE FINANCE LOAN RECEIPT", 50, 30);
 
   doc.moveDown(2);
   doc.fillColor("black").fontSize(14).text("Receipt Details", { underline: true });
@@ -368,6 +370,6 @@ cron.schedule("*/5 * * * *", () => {
 });
 
 // ---------- Start Server ----------
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
