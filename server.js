@@ -1,4 +1,4 @@
-// server.js - Enhanced PayNecta backend with database, balance, and withdrawal features
+// server.js - PayNecta backend compatible with SwiftWallet / Techspace Finance frontend
 const express = require("express");
 const bodyParser = require("body-parser");
 const cors = require("cors");
@@ -7,71 +7,29 @@ const fs = require("fs");
 const path = require("path");
 const PDFDocument = require("pdfkit");
 const cron = require("node-cron");
-const { Pool } = require("pg");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// ====== Database Configuration ======
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-});
-
-// Initialize database tables
-async function initDatabase() {
-  const client = await pool.connect();
-  try {
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        phone VARCHAR(15) UNIQUE NOT NULL,
-        balance DECIMAL(15, 2) DEFAULT 0,
-        has_paid_fee BOOLEAN DEFAULT FALSE,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS transactions (
-        id SERIAL PRIMARY KEY,
-        reference VARCHAR(100) UNIQUE NOT NULL,
-        user_phone VARCHAR(15) NOT NULL,
-        type VARCHAR(50) NOT NULL,
-        amount DECIMAL(15, 2) NOT NULL,
-        status VARCHAR(50) NOT NULL,
-        description TEXT,
-        metadata JSONB,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_transactions_user_phone ON transactions(user_phone);
-      CREATE INDEX IF NOT EXISTS idx_transactions_reference ON transactions(reference);
-      CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone);
-    `);
-
-    console.log("✅ Database initialized successfully");
-  } catch (err) {
-    console.error("Database initialization error:", err.message);
-  } finally {
-    client.release();
-  }
-}
-
-initDatabase();
-
 // ====== Configuration ======
 const PAYNECTA_EMAIL = process.env.PAYNECTA_EMAIL || "ceofreddy254@gmail.com";
-const PAYNECTA_API_KEY = process.env.PAYNECTA_API_KEY || "hmp_qRLRJKTcVe4BhEQyp7GX5bttJTPzgYUUBU8wPZgO";
+const PAYNECTA_API_KEY =
+  process.env.PAYNECTA_API_KEY ||
+  "hmp_qRLRJKTcVe4BhEQyp7GX5bttJTPzgYUUBU8wPZgO";
 const PAYNECTA_CODE = process.env.PAYNECTA_CODE || "PNT_109820";
-const CALLBACK_URL = process.env.CALLBACK_URL || "https://swift-capital.onrender.com/callback";
 
-// JSON storage file for receipts (legacy support)
+const CALLBACK_URL =
+  process.env.CALLBACK_URL ||
+  "https://swift-capital.onrender.com/callback";
+
+// JSON storage file for receipts
 const receiptsFile = path.join(__dirname, "receipts.json");
+
+const FRONTEND_ORIGINS = [
+  "https://techspacefinance.onrender.com",
+  "https://swiftcapitalportal.onrender.com",
+  "http://127.0.0.1:5500",
+];
 
 // Middleware
 app.use(bodyParser.json());
@@ -79,6 +37,24 @@ app.use(cors({ origin: "*" }));
 app.use(express.static('public'));
 
 // ====== Helper functions ======
+function readReceipts() {
+  try {
+    if (!fs.existsSync(receiptsFile)) return {};
+    return JSON.parse(fs.readFileSync(receiptsFile));
+  } catch (err) {
+    console.error("readReceipts error:", err.message);
+    return {};
+  }
+}
+
+function writeReceipts(data) {
+  try {
+    fs.writeFileSync(receiptsFile, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error("writeReceipts error:", err.message);
+  }
+}
+
 function formatPhone(phone) {
   if (!phone) return null;
   const digits = String(phone).replace(/\D/g, "");
@@ -88,198 +64,7 @@ function formatPhone(phone) {
   return null;
 }
 
-async function getOrCreateUser(phone) {
-  const client = await pool.connect();
-  try {
-    let result = await client.query('SELECT * FROM users WHERE phone = $1', [phone]);
-    
-    if (result.rows.length === 0) {
-      result = await client.query(
-        'INSERT INTO users (phone, balance, has_paid_fee) VALUES ($1, 0, FALSE) RETURNING *',
-        [phone]
-      );
-    }
-    
-    return result.rows[0];
-  } finally {
-    client.release();
-  }
-}
-
-async function updateUserBalance(phone, amount, operation = 'add') {
-  const client = await pool.connect();
-  try {
-    const query = operation === 'add' 
-      ? 'UPDATE users SET balance = balance + $1, updated_at = CURRENT_TIMESTAMP WHERE phone = $2 RETURNING *'
-      : 'UPDATE users SET balance = balance - $1, updated_at = CURRENT_TIMESTAMP WHERE phone = $2 RETURNING *';
-    
-    const result = await client.query(query, [amount, phone]);
-    return result.rows[0];
-  } finally {
-    client.release();
-  }
-}
-
-async function markUserFeePaid(phone) {
-  const client = await pool.connect();
-  try {
-    const result = await client.query(
-      'UPDATE users SET has_paid_fee = TRUE, updated_at = CURRENT_TIMESTAMP WHERE phone = $1 RETURNING *',
-      [phone]
-    );
-    return result.rows[0];
-  } finally {
-    client.release();
-  }
-}
-
-async function createTransaction(data) {
-  const client = await pool.connect();
-  try {
-    const result = await client.query(
-      `INSERT INTO transactions (reference, user_phone, type, amount, status, description, metadata) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [data.reference, data.user_phone, data.type, data.amount, data.status, data.description, JSON.stringify(data.metadata || {})]
-    );
-    return result.rows[0];
-  } finally {
-    client.release();
-  }
-}
-
-async function updateTransaction(reference, updates) {
-  const client = await pool.connect();
-  try {
-    const setClause = Object.keys(updates).map((key, i) => `${key} = $${i + 2}`).join(', ');
-    const values = [reference, ...Object.values(updates)];
-    
-    const result = await client.query(
-      `UPDATE transactions SET ${setClause}, updated_at = CURRENT_TIMESTAMP WHERE reference = $1 RETURNING *`,
-      values
-    );
-    return result.rows[0];
-  } finally {
-    client.release();
-  }
-}
-
-async function getUserTransactions(phone, limit = 50) {
-  const client = await pool.connect();
-  try {
-    const result = await client.query(
-      'SELECT * FROM transactions WHERE user_phone = $1 ORDER BY created_at DESC LIMIT $2',
-      [phone, limit]
-    );
-    return result.rows;
-  } finally {
-    client.release();
-  }
-}
-
-// ====== API ENDPOINTS ======
-
-// Get user balance
-app.get("/balance/:phone", async (req, res) => {
-  try {
-    const formattedPhone = formatPhone(req.params.phone);
-    if (!formattedPhone) {
-      return res.status(400).json({ success: false, error: "Invalid phone number" });
-    }
-
-    const user = await getOrCreateUser(formattedPhone);
-    
-    res.json({
-      success: true,
-      balance: parseFloat(user.balance),
-      has_paid_fee: user.has_paid_fee,
-      phone: user.phone
-    });
-  } catch (err) {
-    console.error("Balance fetch error:", err.message);
-    res.status(500).json({ success: false, error: "Server error" });
-  }
-});
-
-// Get user transactions
-app.get("/transactions/:phone", async (req, res) => {
-  try {
-    const formattedPhone = formatPhone(req.params.phone);
-    if (!formattedPhone) {
-      return res.status(400).json({ success: false, error: "Invalid phone number" });
-    }
-
-    const transactions = await getUserTransactions(formattedPhone);
-    
-    res.json({
-      success: true,
-      transactions: transactions.map(t => ({
-        reference: t.reference,
-        type: t.type,
-        amount: parseFloat(t.amount),
-        status: t.status,
-        description: t.description,
-        created_at: t.created_at
-      }))
-    });
-  } catch (err) {
-    console.error("Transactions fetch error:", err.message);
-    res.status(500).json({ success: false, error: "Server error" });
-  }
-});
-
-// Withdrawal request
-app.post("/withdraw", async (req, res) => {
-  try {
-    const { phone, amount } = req.body;
-    const formattedPhone = formatPhone(phone);
-
-    if (!formattedPhone) {
-      return res.status(400).json({ success: false, error: "Invalid phone number" });
-    }
-
-    if (!amount || amount < 100) {
-      return res.status(400).json({ success: false, error: "Minimum withdrawal is KES 100" });
-    }
-
-    const user = await getOrCreateUser(formattedPhone);
-
-    if (!user.has_paid_fee) {
-      return res.status(403).json({ success: false, error: "You must pay the service fee before withdrawing" });
-    }
-
-    if (parseFloat(user.balance) < amount) {
-      return res.status(400).json({ success: false, error: "Insufficient balance" });
-    }
-
-    const reference = "WD-" + Date.now();
-    
-    await createTransaction({
-      reference,
-      user_phone: formattedPhone,
-      type: "withdrawal",
-      amount,
-      status: "processing",
-      description: `Withdrawal of KES ${amount}`,
-      metadata: { withdrawal_to: formattedPhone }
-    });
-
-    await updateUserBalance(formattedPhone, amount, 'subtract');
-
-    res.json({
-      success: true,
-      message: "Withdrawal request submitted successfully",
-      reference,
-      amount,
-      new_balance: parseFloat(user.balance) - amount
-    });
-
-  } catch (err) {
-    console.error("Withdrawal error:", err.message);
-    res.status(500).json({ success: false, error: "Server error" });
-  }
-});
-
-// Payment initiation
+// ---------- 1. /pay - initiate STK push ----------
 app.post("/pay", async (req, res) => {
   try {
     const { phone, amount, loan_amount } = req.body;
@@ -291,8 +76,6 @@ app.post("/pay", async (req, res) => {
       return res.status(400).json({ success: false, error: "Amount must be >= 1" });
 
     const reference = "ORDER-" + Date.now();
-
-    await getOrCreateUser(formattedPhone);
 
     const payload = {
       code: PAYNECTA_CODE,
@@ -315,21 +98,26 @@ app.post("/pay", async (req, res) => {
 
     console.log("PayNecta response:", resp.data);
 
+    const receipts = readReceipts();
+
     if (resp.data && resp.data.success) {
       const transaction_reference = resp.data.data.transaction_reference || null;
 
-      await createTransaction({
+      const receiptData = {
         reference,
-        user_phone: formattedPhone,
-        type: "service_fee",
+        transaction_id: transaction_reference,
+        transaction_code: null,
         amount: Math.round(amount),
+        loan_amount: loan_amount || "50000",
+        phone: formattedPhone,
+        customer_name: "N/A",
         status: "pending",
-        description: `Service fee payment for loan of KES ${loan_amount}`,
-        metadata: {
-          transaction_id: transaction_reference,
-          loan_amount: loan_amount || "50000"
-        }
-      });
+        status_note: `STK push sent to ${formattedPhone}. Enter your M-Pesa PIN to complete.`,
+        timestamp: new Date().toISOString(),
+      };
+
+      receipts[reference] = receiptData;
+      writeReceipts(receipts);
 
       if (transaction_reference) {
         const interval = setInterval(async () => {
@@ -349,26 +137,31 @@ app.post("/pay", async (req, res) => {
             const payStatus = (payData.status || "").toLowerCase();
             console.log(`[${reference}] PayNecta poll status:`, payStatus);
 
+            const receiptsNow = readReceipts();
+            const current = receiptsNow[reference];
+            if (!current) {
+              clearInterval(interval);
+              return;
+            }
+
             if (payStatus === "completed" || payStatus === "processing") {
-              await updateTransaction(reference, { status: "completed" });
-              await markUserFeePaid(formattedPhone);
-              
-              const loanAmount = loan_amount || 50000;
-              await updateUserBalance(formattedPhone, parseFloat(loanAmount), 'add');
-              
-              await createTransaction({
-                reference: "LOAN-" + Date.now(),
-                user_phone: formattedPhone,
-                type: "loan_disbursement",
-                amount: parseFloat(loanAmount),
-                status: "completed",
-                description: `Loan disbursement of KES ${loanAmount}`,
-                metadata: { related_payment: reference }
-              });
-              
+              current.status = "processing";
+              current.transaction_code =
+                payData.mpesa_receipt_number ||
+                payData.mpesa_transaction_id ||
+                current.transaction_code;
+              current.amount = payData.amount || current.amount;
+              current.phone = payData.mobile_number || current.phone;
+              current.status_note = `✅ Payment received. Loan Reference: ${reference}. Processing started.`;
+              current.timestamp = new Date().toISOString();
+              writeReceipts(receiptsNow);
               clearInterval(interval);
             } else if (payStatus === "failed" || payStatus === "cancelled") {
-              await updateTransaction(reference, { status: "failed" });
+              current.status = "cancelled";
+              current.status_note =
+                payData.failure_reason || "Payment failed or cancelled.";
+              current.timestamp = new Date().toISOString();
+              writeReceipts(receiptsNow);
               clearInterval(interval);
             }
           } catch (err) {
@@ -380,23 +173,27 @@ app.post("/pay", async (req, res) => {
       return res.json({
         success: true,
         message: "STK push sent, check your phone",
-        reference
+        reference,
+        receipt: receiptData,
       });
     } else {
-      await createTransaction({
+      const failedReceipt = {
         reference,
-        user_phone: formattedPhone,
-        type: "service_fee",
+        transaction_id: resp.data?.data?.transaction_reference || null,
         amount: Math.round(amount),
-        status: "failed",
-        description: "STK push failed to send",
-        metadata: { loan_amount: loan_amount || "50000" }
-      });
-      
-      return res.status(400).json({ 
-        success: false, 
-        error: resp.data?.message || "STK push failed to send. Try again later." 
-      });
+        loan_amount: loan_amount || "50000",
+        phone: formattedPhone,
+        status: "stk_failed",
+        status_note:
+          resp.data?.message || "STK push failed to send. Try again later.",
+        timestamp: new Date().toISOString(),
+      };
+
+      receipts[reference] = failedReceipt;
+      writeReceipts(receipts);
+      return res
+        .status(400)
+        .json({ success: false, error: failedReceipt.status_note });
     }
   } catch (err) {
     console.error("Payment initiation error:", err.message);
@@ -405,17 +202,20 @@ app.post("/pay", async (req, res) => {
     const { phone, amount, loan_amount } = req.body;
     const formattedPhone = formatPhone(phone);
 
-    if (formattedPhone) {
-      await createTransaction({
-        reference,
-        user_phone: formattedPhone,
-        type: "service_fee",
-        amount: amount ? Math.round(amount) : null,
-        status: "error",
-        description: "System error occurred",
-        metadata: { loan_amount: loan_amount || "50000" }
-      });
-    }
+    const errorReceipt = {
+      reference,
+      transaction_id: null,
+      amount: amount ? Math.round(amount) : null,
+      loan_amount: loan_amount || "50000",
+      phone: formattedPhone,
+      status: "error",
+      status_note: "System error occurred. Please try again later.",
+      timestamp: new Date().toISOString(),
+    };
+
+    const receipts = readReceipts();
+    receipts[reference] = errorReceipt;
+    writeReceipts(receipts);
 
     return res.status(500).json({
       success: false,
@@ -425,68 +225,74 @@ app.post("/pay", async (req, res) => {
   }
 });
 
-// Get transaction/receipt by reference
-app.get("/receipt/:reference", async (req, res) => {
-  try {
-    const client = await pool.connect();
-    try {
-      const result = await client.query(
-        'SELECT * FROM transactions WHERE reference = $1',
-        [req.params.reference]
-      );
-      
-      if (result.rows.length === 0) {
-        return res.status(404).json({ success: false, error: "Receipt not found" });
-      }
-      
-      const transaction = result.rows[0];
-      res.json({ 
-        success: true, 
-        receipt: {
-          reference: transaction.reference,
-          amount: parseFloat(transaction.amount),
-          status: transaction.status,
-          phone: transaction.user_phone,
-          description: transaction.description,
-          timestamp: transaction.created_at,
-          metadata: transaction.metadata
-        }
-      });
-    } finally {
-      client.release();
-    }
-  } catch (err) {
-    console.error("Receipt fetch error:", err.message);
-    res.status(500).json({ success: false, error: "Server error" });
-  }
+// ---------- 2. /callback - webhook handler ----------
+app.post("/callback", (req, res) => {
+  console.log("Callback received:", JSON.stringify(req.body).slice(0, 500));
+  const data = req.body;
+  processWebhookData(data);
+  return res.json({ ResultCode: 0, ResultDesc: "Success" });
 });
 
-// Generate PDF receipt
-app.get("/receipt/:reference/pdf", async (req, res) => {
-  try {
-    const client = await pool.connect();
-    try {
-      const result = await client.query(
-        'SELECT * FROM transactions WHERE reference = $1',
-        [req.params.reference]
-      );
-      
-      if (result.rows.length === 0) {
-        return res.status(404).json({ success: false, error: "Receipt not found" });
-      }
-      
-      const receipt = result.rows[0];
-      generateReceiptPDF(receipt, res);
-    } finally {
-      client.release();
-    }
-  } catch (err) {
-    console.error("PDF generation error:", err.message);
-    res.status(500).json({ success: false, error: "Server error" });
+function processWebhookData(data) {
+  const receipts = readReceipts();
+  const refCandidates = [
+    data.external_reference,
+    data.transaction_reference,
+    data.reference,
+    data.data?.transaction_reference,
+  ].filter(Boolean);
+
+  const ref = refCandidates[0];
+  if (!ref) return;
+
+  const receipt = receipts[ref] || {};
+  const payData = data.data || data;
+  const status = (payData.status || "").toLowerCase();
+
+  if (status === "completed" || payData.result_code === 0) {
+    receipt.status = "processing";
+    receipt.status_note = "✅ Payment verified. Loan processing started.";
+  } else {
+    receipt.status = "cancelled";
+    receipt.status_note =
+      payData.failure_reason ||
+      payData.result?.ResultDesc ||
+      "Payment failed or cancelled.";
   }
+
+  receipt.timestamp = new Date().toISOString();
+  receipts[ref] = receipt;
+  writeReceipts(receipts);
+}
+
+// ---------- 3. /receipt/:reference ----------
+app.get("/receipt/:reference", (req, res) => {
+  const receipts = readReceipts();
+  const receipt = receipts[req.params.reference];
+  if (!receipt)
+    return res.status(404).json({ success: false, error: "Receipt not found" });
+  res.json({ success: true, receipt });
 });
 
-// PDF Generator
+// ---------- 4. /transactions - get all transactions ----------
+app.get("/transactions", (req, res) => {
+  const receipts = readReceipts();
+  const transactions = Object.values(receipts).sort((a, b) => 
+    new Date(b.timestamp) - new Date(a.timestamp)
+  );
+  res.json({ success: true, transactions });
+});
+
+// ---------- 5. /receipt/:reference/pdf ----------
+app.get("/receipt/:reference/pdf", (req, res) => {
+  const receipts = readReceipts();
+  const receipt = receipts[req.params.reference];
+  if (!receipt)
+    return res.status(404).json({ success: false, error: "Receipt not found" });
+  generateReceiptPDF(receipt, res);
+});
+
+// ---------- PDF Generator ----------
 function generateReceiptPDF(receipt, res) {
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader(
@@ -500,28 +306,34 @@ function generateReceiptPDF(receipt, res) {
   let color = "#2196F3";
   let watermark = "PENDING";
 
-  if (receipt.status === "completed") {
+  if (receipt.status === "processing") {
+    watermark = "PROCESSING";
+  } else if (receipt.status === "loan_released") {
     color = "#4caf50";
-    watermark = "COMPLETED";
-  } else if (["failed", "error"].includes(receipt.status)) {
+    watermark = "RELEASED";
+  } else if (["cancelled", "error"].includes(receipt.status)) {
     color = "#f44336";
     watermark = "FAILED";
   }
 
   doc.rect(0, 0, doc.page.width, 80).fill(color);
-  doc.fillColor("white").fontSize(20).text("TECHSPACE FINANCE RECEIPT", 50, 30);
+  doc
+    .fillColor("white")
+    .fontSize(20)
+    .text("TECHSPACE FINANCE LOAN RECEIPT", 50, 30);
 
   doc.moveDown(2);
   doc.fillColor("black").fontSize(14).text("Receipt Details", { underline: true });
 
   const details = [
     ["Reference", receipt.reference],
-    ["Type", receipt.type.toUpperCase()],
-    ["Amount", `KSH ${parseFloat(receipt.amount).toFixed(2)}`],
-    ["Phone", receipt.user_phone],
+    ["Transaction ID", receipt.transaction_id || "N/A"],
+    ["Amount", `KSH ${receipt.amount}`],
+    ["Loan Amount", `KSH ${receipt.loan_amount}`],
+    ["Phone", receipt.phone],
     ["Status", receipt.status.toUpperCase()],
-    ["Description", receipt.description || "N/A"],
-    ["Time", new Date(receipt.created_at).toLocaleString()],
+    ["Note", receipt.status_note || "N/A"],
+    ["Time", new Date(receipt.timestamp).toLocaleString()],
   ];
 
   details.forEach(([k, v]) => doc.text(`${k}: ${v}`));
@@ -538,14 +350,26 @@ function generateReceiptPDF(receipt, res) {
   doc.end();
 }
 
-// Callback webhook
-app.post("/callback", (req, res) => {
-  console.log("Callback received:", JSON.stringify(req.body).slice(0, 500));
-  res.json({ ResultCode: 0, ResultDesc: "Success" });
+// ---------- Cron job: release loans after 24 hours ----------
+cron.schedule("*/5 * * * *", () => {
+  const receipts = readReceipts();
+  const now = Date.now();
+  for (const ref in receipts) {
+    const r = receipts[ref];
+    if (r.status === "processing") {
+      const releaseTime =
+        new Date(r.timestamp).getTime() + 24 * 60 * 60 * 1000;
+      if (now >= releaseTime) {
+        r.status = "loan_released";
+        r.status_note = "Loan has been released to your account. Thank you.";
+        console.log(`✅ Released loan for ${ref}`);
+      }
+    }
+  }
+  writeReceipts(receipts);
 });
 
-// Start Server
+// ---------- Start Server ----------
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📊 Database connected`);
 });
