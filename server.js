@@ -17,13 +17,13 @@ const PAYNECTA_API_KEY = process.env.PAYNECTA_API_KEY || "hmp_qRLRJKTcVe4BhEQyp7
 const PAYNECTA_CODE = process.env.PAYNECTA_CODE || "PNT_109820";
 
 // The callback URL PayNecta will call (use your tested backend domain)
-const CALLBACK_URL = process.env.CALLBACK_URL || "https://techspacefinance.onrender.com";
+const CALLBACK_URL = process.env.CALLBACK_URL || "https://swiftcapitalportal.onrender.com";
 
 // JSON storage file for receipts
 const receiptsFile = path.join(__dirname, "receipts.json");
 
 // CORS origin: keep frontend intact
-const FRONTEND_ORIGIN = "https://techspacefinance.onrender.com";
+const FRONTEND_ORIGIN = "https://swiftcapitalportal.onrender.com";
 
 // Middleware
 app.use(bodyParser.json());
