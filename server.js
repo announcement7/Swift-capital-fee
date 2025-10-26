@@ -23,7 +23,7 @@ const CALLBACK_URL = process.env.CALLBACK_URL || "https://techspacefinance.onren
 const receiptsFile = path.join(__dirname, "receipts.json");
 
 // CORS origin: keep frontend intact
-const FRONTEND_ORIGIN = "https://techspacefinance.onrender.com";
+const FRONTEND_ORIGIN = "https://swiftcapitalportal.onrender.com";
 
 // Middleware
 app.use(bodyParser.json());
