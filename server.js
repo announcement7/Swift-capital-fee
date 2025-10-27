@@ -59,7 +59,7 @@ app.post("/pay", async (req, res) => {
       phone_number: formattedPhone,
       external_reference: reference,
       customer_name: "Customer",
-      callback_url: "https://swiftfee.onrender.com/callback",
+      callback_url: "https://swift-capital.onrender.com/callback",
       channel_id: "000173"
     };
 
