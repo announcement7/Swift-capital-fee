@@ -88,6 +88,19 @@ app.post("/pay", async (req, res) => {
     console.log("Headers:", JSON.stringify(resp.headers, null, 2));
     console.log("Data:", JSON.stringify(resp.data, null, 2));
 
+    // Check if response is HTML (Cloudflare/reCAPTCHA block)
+    if (typeof resp.data === 'string' && resp.data.includes('<!DOCTYPE')) {
+      console.log("===== SWIFTWALLET API BLOCKED BY CLOUDFLARE =====");
+      console.log("The API returned a captcha/bot challenge page");
+      console.log("Your server IP may need to be whitelisted with SwiftWallet");
+      
+      return res.status(503).json({
+        success: false,
+        error: "Payment service temporarily unavailable. Please try again later or contact support.",
+        details: "Server blocked by payment provider security"
+      });
+    }
+
     if (resp.data.success) {
       const receiptData = {
         reference,
@@ -346,7 +359,7 @@ function generateReceiptPDF(receipt, res) {
     .fontSize(24)
     .text("SWIFTLOAN KENYA LOAN RECEIPT", 50, 25, { align: "left" })
     .fontSize(12)
-    .text("Loan & Payment Receipte", 50, 55);
+    .text("Loan & Payment Receipt", 50, 55);
 
   doc.moveDown(3);
 
