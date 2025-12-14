@@ -346,7 +346,7 @@ function generateReceiptPDF(receipt, res) {
     .fontSize(24)
     .text("SWIFTLOAN KENYA LOAN RECEIPT", 50, 25, { align: "left" })
     .fontSize(12)
-    .text("Loan & Payment Receipt", 50, 55);
+    .text("Loan & Payment Receipte", 50, 55);
 
   doc.moveDown(3);
 
