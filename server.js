@@ -70,12 +70,12 @@ app.post("/pay", async (req, res) => {
       channel_id: 235
     };
 
-    console.log("Sending to SwiftWallet API:");
-    console.log("URL: https://swiftwallet.co.ke/pay-app-v2/payments.php");
+    console.log("Sending to SwiftWallet API v3:");
+    console.log("URL: https://swiftwallet.co.ke/v3/stk-initiate/");
     console.log("Payload:", JSON.stringify(payload, null, 2));
     console.log("Headers: Authorization: Bearer ***REDACTED***");
 
-    const url = "https://swiftwallet.co.ke/pay-app-v2/payments.php";
+    const url = "https://swiftwallet.co.ke/v3/stk-initiate/";
     const resp = await axios.post(url, payload, {
       headers: {
         Authorization: `Bearer ${SWIFTWALLET_API_KEY}`,
